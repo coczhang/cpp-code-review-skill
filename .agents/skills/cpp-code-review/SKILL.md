@@ -1,6 +1,6 @@
 ---
 name: cpp-code-review
-description: Use this skill when reviewing C++ or Qt code for production bugs, memory leaks, dangling pointers and lifetime hazards, unnecessary copy overhead, thread safety, exception safety, performance, maintainability, CMake/build issues, and cross-platform risks. Especially useful for Qt Widgets, QObject ownership, QThread, signal-slot code, FFmpeg/OpenCV integration, Windows/Linux/macOS desktop software, and industrial applications.
+description: Use this skill when reviewing C++ or Qt code for production bugs, memory leaks, dangling pointers and lifetime hazards, unnecessary copy overhead, thread safety, exception safety, code style and project convention violations, redundant or duplicated code, performance, maintainability, CMake/build issues, and cross-platform risks. Especially useful for Qt Widgets, QObject ownership, QThread, signal-slot code, FFmpeg/OpenCV integration, Windows/Linux/macOS desktop software, and industrial applications.
 ---
 
 # cpp-code-review Skill
@@ -11,13 +11,15 @@ Prioritize evidence-backed correctness, safety, maintainability, and performance
 
 ## Core Review Contract
 
-Always consider these five risk classes:
+Always consider these seven risk classes:
 
 1. Memory leaks and ownership
 2. Dangling pointers, references, iterators, views, and callbacks
 3. Unnecessary copy or conversion overhead
 4. Thread safety and shutdown safety
 5. Exception safety and cleanup on failure paths
+6. Code style, API consistency, and project convention drift
+7. Redundant, duplicated, dead, or over-generalized code
 
 Report a confirmed finding only when code evidence supports it. When evidence is incomplete, mark it as `Likely` or `Question` and say what would confirm it.
 
@@ -36,10 +38,12 @@ python .agents/skills/cpp-code-review/scripts/cpp_review_scout.py <paths>
    - `references/thread-safety.md`: data races, locks, shutdown, Qt thread affinity.
    - `references/exception-safety.md`: RAII cleanup, commit/rollback, noexcept boundaries.
    - `references/performance-copy-cost.md`: copy overhead, conversions, hot paths.
+   - `references/code-quality-style.md`: style conventions, redundant code, duplication, dead code, and over-abstraction.
    - `references/qt-rules.md`: QObject, signal-slot, widgets, QThread, timers, network objects.
    - `references/finding-templates.md`: concise finding and fix templates.
 4. Review highest-severity risks first: undefined behavior, leaks in long-running paths, use-after-free, data races, deadlocks, UI-thread violations, failed cleanup, and partial state mutation.
-5. Provide focused fixes with code snippets or patch-style changes when the fix is clear.
+5. When the user asks for code standards, redundancy, or duplication, report convention and maintainability findings after correctness findings, and tie each one to local evidence.
+6. Provide focused fixes with code snippets or patch-style changes when the fix is clear.
 
 Useful scanner options:
 
@@ -62,14 +66,14 @@ Each finding should include:
 - The production consequence.
 - A safer alternative.
 
-Avoid vague comments such as "optimize this" or "might be unsafe" unless you also state what evidence would confirm it.
+Avoid vague comments such as "optimize this", "style is inconsistent", or "might be unsafe" unless you also state what evidence would confirm it. Do not report pure formatting preferences unless the repository has an explicit convention or the inconsistency makes maintenance harder.
 
 ## Severity Rules
 
 - `Critical`: crash, undefined behavior, data race, deadlock, serious leak in long-running code, security issue, data corruption.
 - `High`: likely production bug, UI freeze, incorrect ownership/threading, exception path leak, severe performance issue.
-- `Medium`: fragile lifetime assumption, unclear ownership, missing error handling, risky copy overhead, maintainability issue.
-- `Low`: style, naming, small cleanup, minor inefficiency.
+- `Medium`: fragile lifetime assumption, unclear ownership, missing error handling, risky copy overhead, duplicated logic that can drift, maintainability issue.
+- `Low`: local style or naming inconsistency, small cleanup, minor inefficiency, harmless redundancy.
 
 ## Output Format
 
