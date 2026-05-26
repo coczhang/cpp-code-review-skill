@@ -277,7 +277,3 @@ python -B .agents\skills\cpp-code-review\scripts\cpp_review_scout.py . --tools
 - 完整静态分析器
 - 编译器或单元测试替代品
 - 自动修复所有 C++ 问题的工具
-
-## License
-
-如果你准备公开到 GitHub，建议在仓库中补充一个 `LICENSE` 文件，例如 MIT License，方便其他人明确使用和二次分发规则。
