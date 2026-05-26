@@ -1,5 +1,5 @@
 # cpp-code-review-skill
-`cpp-code-review-skill` 是一个面向 Codex 的 C++ / Qt 代码审查 skill。它把 Codex 的审查重点收束到生产环境里最容易造成事故的 C++ 问题：内存泄漏、悬空指针、拷贝开销、线程安全、异常安全，以及 Qt 对象生命周期和线程亲和性。
+`cpp-code-review-skill` 是一个面向 Codex 的 C++ / Qt 代码审查 skill。它把 Codex 的审查重点收束到生产环境里最容易造成事故或维护成本失控的 C++ 问题：内存泄漏、悬空指针、拷贝开销、线程安全、异常安全、代码规范漂移、冗余重复代码，以及 Qt 对象生命周期和线程亲和性。
 
 这个仓库适合放到 GitHub 后作为可复用 skill 使用：你可以把它安装到某个项目的 `.agents/skills` 目录，也可以安装到个人 Codex skills 目录，让 Codex 在审查 C++ / Qt 代码时自动加载这套审查流程。
 
@@ -12,6 +12,8 @@
 - 拷贝开销和性能：大对象按值传参、range-for 按值复制、Qt 隐式共享 detach、字符串/图像/视频帧反复转换、热路径分配。
 - 线程安全：数据竞争、锁顺序、手动 `lock/unlock`、`std::thread` / `QThread` 退出、UI 线程访问、Qt 跨线程 signal-slot。
 - 异常安全：构造失败、部分初始化、失败路径清理、状态提交/回滚、`noexcept` 边界、析构函数异常。
+- 代码规范和一致性：命名、include 顺序、头文件卫生、错误处理风格、日志风格、Qt/C++ 习惯用法是否偏离项目约定。
+- 冗余和重复代码：重复分支、重复校验/转换/清理逻辑、死代码、无意义 wrapper、过度抽象和容易漂移的复制粘贴代码。
 - Qt 专项风险：QObject ownership、`deleteLater()`、lambda connect 生命周期、`Qt::DirectConnection`、`Qt::BlockingQueuedConnection`、`QTimer` / `QNetworkAccessManager` 生命周期。
 
 它还包含一个启发式热点扫描脚本 `cpp_review_scout.py`，用于在审查前快速找出值得人工确认的代码线索。
@@ -29,6 +31,7 @@ cpp-code-review-skill/
           cpp_review_scout.py
         references/
           cpp-risk-checklists.md
+          code-quality-style.md
           exception-safety.md
           finding-templates.md
           memory-lifetime.md
@@ -118,6 +121,10 @@ Use cpp-code-review to check this QThread shutdown logic.
 
 ```text
 帮我 review 这次改动，使用 cpp-code-review，优先找 crash、data race、leak 和 exception-safety 问题。
+```
+
+```text
+使用 cpp-code-review 审查这次 C++ 改动，重点看代码规范、冗余逻辑、重复代码和过度封装。
 ```
 
 Codex 也可能根据 skill 描述自动触发，但在重要审查里建议显式写出 `cpp-code-review`，这样更稳定。
@@ -251,6 +258,7 @@ Acceptable, acceptable with changes, or redesign recommended.
 
 - 帮 Codex 按生产风险组织审查思路。
 - 把 C++ / Qt 常见事故模式变成可重复检查的流程。
+- 把代码规范、重复逻辑和冗余实现纳入同一套 review 输出。
 - 用脚本快速生成热点线索。
 - 把工具输出和人工上下文判断结合起来形成可执行 review。
 
