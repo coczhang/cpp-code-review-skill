@@ -51,6 +51,13 @@ SKIP_DIRS = {
 
 VENDOR_DIRS = {"3rdparty", "third_party", "external", "extern", "vendor", "vendors"}
 
+EXTRA_CATEGORIES = {
+    "conditional-complexity",
+    "coupling",
+    "duplicate-code",
+    "expensive-operation",
+}
+
 
 @dataclass(frozen=True)
 class Rule:
@@ -105,6 +112,18 @@ RULES: Sequence[Rule] = (
     Rule("return-std-move", "copy-overhead", "Low", rx(r"\breturn\s+std::move\s*\("), "return std::move(local) can block NRVO; verify it is needed."),
     Rule("string-conversion", "copy-overhead", "Medium", rx(r"\b(?:toStdString|fromStdString|fromUtf8|toUtf8|toLocal8Bit)\s*\("), "String conversion: avoid repeated conversions in hot paths and check encoding assumptions."),
     Rule("image-conversion", "copy-overhead", "Medium", rx(r"\b(?:scaled|rgbSwapped|convertToFormat|fromImage|toImage|clone)\s*\("), "Image/frame conversion or clone: verify this is not repeated in a hot path."),
+    Rule("qt-wait-for", "expensive-operation", "High", rx(r"\bwaitFor(?:ReadyRead|BytesWritten|Connected|Disconnected|Finished)\s*\("), "Blocking Qt wait: verify it is not on the GUI thread or a latency-sensitive path."),
+    Rule("event-loop-exec", "expensive-operation", "High", rx(r"\bQEventLoop\b|\.exec\s*\(\s*\)"), "Nested or blocking event loop: check UI freeze, reentrancy, and shutdown behavior."),
+    Rule("sleep-call", "expensive-operation", "Medium", rx(r"\b(?:QThread::(?:m?sleep|usleep)|std::this_thread::sleep_for|Sleep|sleep|usleep)\s*\("), "Sleep/wait call: verify this does not block UI, worker shutdown, or hot paths."),
+    Rule("future-blocking-wait", "expensive-operation", "Medium", rx(r"\.(?:get|wait|wait_for|wait_until)\s*\("), "Blocking future/result wait: check thread, timeout, cancellation, and UI responsiveness."),
+    Rule("process-blocking", "expensive-operation", "High", rx(r"\bQProcess\b|\bstd::system\s*\("), "Process launch or wait: verify it is asynchronous or off the GUI thread with timeout/error handling."),
+    Rule("file-io", "expensive-operation", "Medium", rx(r"\b(?:QFile|QSaveFile|QDirIterator|std::ifstream|std::ofstream|fopen|fread|fwrite)\b"), "File I/O: verify it is not repeated in hot paths or blocking the GUI thread."),
+    Rule("database-query", "expensive-operation", "Medium", rx(r"\bQSqlQuery\b|\.(?:exec|prepare)\s*\("), "Database operation: verify thread affinity, latency, error handling, and batching."),
+    Rule("heavy-parse-convert", "expensive-operation", "Medium", rx(r"\b(?:QJsonDocument::fromJson|QXmlStreamReader|QImageReader|QImageWriter|cv::imread|cv::imwrite|avformat_open_input|compress|uncompress)\b"), "Heavy parse/convert operation: verify it is cached, batched, or moved out of hot/UI paths."),
+    Rule("global-singleton", "coupling", "Medium", rx(r"\b(?:ServiceLocator|ApplicationContext|Global[A-Za-z0-9_]*|Registry)::|\b(?:instance|getInstance)\s*\(\s*\)|\bqApp\b|\bQApplication::instance\s*\("), "Global singleton/service locator: check hidden coupling, testability, and initialization order."),
+    Rule("ui-heavy-include", "coupling", "Medium", rx(r"^\s*#\s*include\s*[<\"].*(?:QWidget|QDialog|QMainWindow|QTableWidget|QTreeWidget|ui_[^>\"]+|[/\\]ui[/\\])"), "UI dependency in include: verify this layer should depend on widgets or generated UI classes."),
+    Rule("infra-heavy-include", "coupling", "Medium", rx(r"^\s*#\s*include\s*[<\"].*(?:QSql|QNetwork|Database|Repository|Dao|Device|Serial|Modbus|Protocol)"), "Infrastructure dependency in include: check module boundaries and whether a narrower interface belongs in the header."),
+    Rule("long-if-line", "conditional-complexity", "Low", rx(r"\belse\s+if\s*\("), "else-if branch: count chain length and consider guard clauses/table dispatch when chains grow."),
     Rule("thread-detach", "thread-safety", "High", rx(r"\bdetach\s*\(\s*\)"), "Detached thread: verify object lifetime, shutdown, and lost error handling."),
     Rule("thread-construction", "thread-safety", "Medium", rx(r"\bstd::thread\s+(?:[A-Za-z_][A-Za-z0-9_]*|\{|\()"), "std::thread creation: verify ownership, join path, cancellation, and exception boundaries."),
     Rule("manual-lock", "thread-safety", "High", rx(r"(?:\.|->)\s*lock\s*\(\s*\)"), "Manual lock: prefer RAII lock guards and check exception/early-return paths."),
@@ -124,7 +143,7 @@ RULES: Sequence[Rule] = (
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
-    categories = sorted({rule.category for rule in RULES})
+    categories = sorted({rule.category for rule in RULES} | EXTRA_CATEGORIES)
     parser = argparse.ArgumentParser(description="Scan C++/Qt files for review hotspots.")
     parser.add_argument("paths", nargs="*", default=["."], help="Files or directories to scan.")
     parser.add_argument("--category", choices=categories, help="Only report one category.")
@@ -237,6 +256,133 @@ def make_finding(path_label: str, line: int, rule: Rule, code: str) -> Finding:
     )
 
 
+def make_dynamic_finding(path_label: str, line: int, category: str, severity: str, rule_id: str, message: str, code: str) -> Finding:
+    return Finding(
+        path=path_label,
+        line=line,
+        category=category,
+        severity=severity,
+        rule_id=rule_id,
+        message=message,
+        code=" ".join(code.strip().split()),
+    )
+
+
+def normalize_duplicate_line(line: str) -> str:
+    stripped = line.strip()
+    if not stripped or stripped in {"{", "}", "};", ";"}:
+        return ""
+    if stripped.startswith("#include") or stripped.startswith("#pragma"):
+        return ""
+    stripped = re.sub(r'"(?:\\.|[^"\\])*"', '"STR"', stripped)
+    stripped = re.sub(r"'(?:\\.|[^'\\])*'", "'CHR'", stripped)
+    stripped = re.sub(r"\b\d+(?:\.\d+)?\b", "NUM", stripped)
+    stripped = re.sub(r"\s+", " ", stripped)
+    return stripped
+
+
+def scan_conditional_complexity(path_label: str, raw_lines: Sequence[str], code_lines: Sequence[str], category: Optional[str]) -> List[Finding]:
+    if category and category != "conditional-complexity":
+        return []
+
+    findings: List[Finding] = []
+    chain_start = 0
+    chain_count = 0
+    chain_sample = ""
+
+    for number, code_line in enumerate(code_lines, start=1):
+        stripped = code_line.strip()
+        if re.search(r"\belse\s+if\s*\(", stripped):
+            if chain_count == 0:
+                chain_start = number
+                chain_sample = raw_lines[number - 1].strip() if number - 1 < len(raw_lines) else stripped
+            chain_count += 1
+            if chain_count == 3:
+                findings.append(make_dynamic_finding(
+                    path_label,
+                    chain_start,
+                    "conditional-complexity",
+                    "Medium",
+                    "long-else-if-chain",
+                    "Long else-if chain: consider guard clauses, table-driven dispatch, or strategy only if cases are stable and repeated.",
+                    chain_sample,
+                ))
+        elif stripped and stripped not in {"{", "}"}:
+            chain_start = 0
+            chain_count = 0
+            chain_sample = ""
+
+    brace_depth = 0
+    reported_deep_nesting = False
+    for number, code_line in enumerate(code_lines, start=1):
+        stripped = code_line.strip()
+        if not reported_deep_nesting and brace_depth >= 5 and re.search(r"\b(?:if|for|while|switch)\s*\(", stripped):
+            findings.append(make_dynamic_finding(
+                path_label,
+                number,
+                "conditional-complexity",
+                "Medium",
+                "deep-control-nesting",
+                "Deep control nesting: verify readability, early exits, and separation of validation/state mutation/I/O.",
+                raw_lines[number - 1] if number - 1 < len(raw_lines) else stripped,
+            ))
+            reported_deep_nesting = True
+        brace_depth += code_line.count("{") - code_line.count("}")
+        if brace_depth < 0:
+            brace_depth = 0
+
+    return findings
+
+
+def scan_duplicate_blocks(path_label: str, raw_lines: Sequence[str], code_lines: Sequence[str], category: Optional[str]) -> List[Finding]:
+    if category and category != "duplicate-code":
+        return []
+
+    normalized: List[tuple[int, str, str]] = []
+    for number, (raw_line, code_line) in enumerate(zip(raw_lines, code_lines), start=1):
+        norm = normalize_duplicate_line(code_line)
+        if norm:
+            normalized.append((number, norm, raw_line.strip()))
+
+    window = 8
+    seen: dict[tuple[str, ...], int] = {}
+    reported: set[tuple[str, ...]] = set()
+    findings: List[Finding] = []
+
+    for index in range(0, max(0, len(normalized) - window + 1)):
+        block = tuple(item[1] for item in normalized[index : index + window])
+        if sum(len(item) for item in block) < 120:
+            continue
+        line = normalized[index][0]
+        previous = seen.get(block)
+        if previous is None:
+            seen[block] = line
+            continue
+        if block in reported:
+            continue
+        reported.add(block)
+        findings.append(make_dynamic_finding(
+            path_label,
+            line,
+            "duplicate-code",
+            "Medium",
+            "duplicate-code-block",
+            f"Duplicate code block: similar {window}-line normalized block previously starts near line {previous}; confirm whether shared validation/conversion/cleanup should be extracted.",
+            normalized[index][2],
+        ))
+        if len(findings) >= 20:
+            break
+
+    return findings
+
+
+def scan_structural_patterns(path_label: str, raw_lines: Sequence[str], code_lines: Sequence[str], category: Optional[str]) -> List[Finding]:
+    findings: List[Finding] = []
+    findings.extend(scan_conditional_complexity(path_label, raw_lines, code_lines, category))
+    findings.extend(scan_duplicate_blocks(path_label, raw_lines, code_lines, category))
+    return findings
+
+
 def scan_text(path_label: str, text: str, category: Optional[str] = None) -> List[Finding]:
     raw_lines = text.splitlines()
     code_lines = strip_comments(text)
@@ -260,6 +406,8 @@ def scan_text(path_label: str, text: str, category: Optional[str] = None) -> Lis
                 continue
             if rule.pattern.search(chunk):
                 findings.append(make_finding(path_label, start_line, rule, chunk))
+
+    findings.extend(scan_structural_patterns(path_label, raw_lines, code_lines, category))
 
     return sorted(findings, key=lambda item: (item.line, item.category, item.rule_id))
 
@@ -351,6 +499,29 @@ public:
         auto *timer = new QTimer();
         auto *p = new int(1);
         for (auto value : values) { (void)value; }
+        QFile file("large.json");
+        QThread::sleep(1);
+        ServiceLocator::instance().database();
+        if (mode == 1) { handleA(); }
+        else if (mode == 2) { handleB(); }
+        else if (mode == 3) { handleC(); }
+        else if (mode == 4) { handleD(); }
+        validate(text);
+        convert(text);
+        persist(text);
+        cleanup(values);
+        notify(text);
+        updateState(values);
+        logState(text);
+        finish(values);
+        validate(text);
+        convert(text);
+        persist(text);
+        cleanup(values);
+        notify(text);
+        updateState(values);
+        logState(text);
+        finish(values);
         mutex.lock();
         connect(this,
                 &Worker::done,
@@ -367,6 +538,10 @@ public:
         "memory-lifetime",
         "dangling-lifetime",
         "copy-overhead",
+        "expensive-operation",
+        "coupling",
+        "conditional-complexity",
+        "duplicate-code",
         "thread-safety",
         "exception-safety",
         "qt-lifetime",

@@ -1,6 +1,6 @@
 # Code Quality, Style, And Duplication Review
 
-Use this reference when the review includes C++ code standards, maintainability, redundant code, duplicated logic, dead code, or over-abstraction.
+Use this reference when the review includes C++ code standards, maintainability, strong coupling, long if-else chains, conditional complexity, redundant code, duplicated logic, dead code, or over-abstraction.
 
 ## Review Order
 
@@ -18,6 +18,31 @@ Prefer local evidence over generic preferences:
 
 Do not report a style finding only because another style is personally preferable. Tie it to an explicit local convention, maintainability cost, or API misuse risk.
 
+## Strong Coupling And Module Boundaries
+
+Look for code that makes modules hard to change, test, or reuse independently:
+
+- UI code directly owns persistence, networking, device, parsing, or business-rule details instead of calling a narrow service/API boundary.
+- Worker, storage, protocol, or algorithm code directly depends on widgets, dialogs, global application state, or concrete UI classes.
+- Business rules are duplicated across UI slots, threads, command handlers, and validation helpers.
+- Headers expose private implementation details, heavy dependencies, concrete singletons, or large transitive includes.
+- Bidirectional dependencies, circular includes, service locator/global access, or callbacks that require unrelated subsystems to be initialized.
+- Tests for one class require constructing broad application infrastructure because dependencies are not injectable or interface-shaped.
+
+Prefer a smaller boundary only when it removes real coupling: pass a narrow interface, data object, callback, or service dependency; move UI-independent rules out of widgets; hide implementation details behind `.cpp`, pimpl, or local helpers when that matches the project style.
+
+## Long If-Else Chains And Conditional Complexity
+
+Look for conditionals that hide duplicated behavior or make new cases risky:
+
+- Long `if` / `else if` chains branching on type names, command strings, status codes, modes, UI labels, or enum values.
+- Multiple files repeat the same condition chain or switch over the same modes.
+- Deeply nested branches mix validation, state mutation, logging, UI updates, and I/O in one function.
+- Branches differ only by constants, field names, messages, or target handlers.
+- New cases require editing several unrelated functions, which suggests missing dispatch, table data, or a shared command path.
+
+Prefer guard clauses, early returns, small extracted handlers, table-driven dispatch, maps from key to handler, or strategy/polymorphism only when the set of variants is stable enough to justify it. Do not replace a short, readable two- or three-branch condition just to apply a pattern.
+
 ## Redundancy And Duplication
 
 Look for evidence of copy-paste or repeated logic:
@@ -33,8 +58,8 @@ Prefer small, local simplifications: extract a helper only when it removes real 
 
 ## Severity Guidance
 
-- `High`: duplicated logic already diverges in a way that can produce wrong behavior, missed cleanup, inconsistent locking, or inconsistent validation.
-- `Medium`: repeated code is likely to drift, hides a shared invariant, makes fixes easy to miss, or creates conflicting behavior across call sites.
+- `High`: duplicated logic, strong coupling, or branch complexity already diverges in a way that can produce wrong behavior, missed cleanup, inconsistent locking, or inconsistent validation.
+- `Medium`: repeated code, strong coupling, or long conditional chains are likely to drift, hide a shared invariant, make fixes easy to miss, or create conflicting behavior across call sites.
 - `Low`: harmless style drift, minor dead code, or local redundancy that is easy to clean up.
 
 ## Finding Evidence
@@ -43,6 +68,8 @@ For each code-quality finding, include:
 
 - The repeated or inconsistent locations.
 - The specific local convention or duplicated behavior.
+
+- The coupling direction, branching structure, or repeated condition chain that makes change risky.
 - Why it matters beyond preference.
 - A minimal simplification or extraction.
 

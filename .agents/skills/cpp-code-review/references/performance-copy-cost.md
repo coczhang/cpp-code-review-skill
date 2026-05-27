@@ -1,10 +1,21 @@
 # Performance And Copy-Cost Review
 
-Use this reference for unnecessary copies, conversions, allocations, and hot-path performance.
+Use this reference for unnecessary copies, conversions, allocations, expensive/blocking operations, and hot-path performance.
 
 ## Hot Paths
 
 Inspect paint events, frame callbacks, timers, signal-heavy paths, logging loops, parsing loops, UI refresh code, image/video conversion, and network/database polling first.
+
+Also inspect blocking disk/network/database I/O, synchronous process calls, sleep/wait calls, large parsing/compression/encryption/model-inference work, and heavy initialization performed on the GUI thread or in signal-heavy paths.
+
+## Expensive Or Blocking Operation Checks
+
+- Blocking disk, network, database, IPC, process, or device I/O on the GUI thread or in latency-sensitive callbacks.
+- Synchronous waits such as `wait()`, `waitFor...()`, nested `QEventLoop::exec()`, `sleep()`, busy polling, or blocking future/result retrieval.
+- Large JSON/XML/CSV parsing, compression, encryption, model inference, image/video conversion, or report generation in UI slots, paint events, timers, or signal-heavy paths.
+- Repeated initialization of FFmpeg/OpenCV contexts, database connections, network clients, regex engines, large lookup tables, or caches inside loops.
+- Unbounded loops over files, frames, rows, widgets, or messages without batching, cancellation, progress, or back-pressure.
+- Excessive synchronous logging or formatting in hot paths.
 
 ## Copy And Conversion Checks
 
@@ -23,6 +34,10 @@ Inspect paint events, frame callbacks, timers, signal-heavy paths, logging loops
 - Use `T&&` for explicit move-only transfer.
 - Use views only when lifetime is obvious and documented.
 - Cache conversion contexts, scaled images, and reusable buffers when inputs are stable.
+
+- Move blocking work to worker threads or async APIs, and return results to the GUI thread with queued signals.
+- Cache expensive setup and reuse buffers in frame, paint, timer, parsing, and polling loops.
+- Bound long loops with batching, cancellation, progress reporting, or back-pressure.
 
 Example:
 

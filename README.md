@@ -1,5 +1,5 @@
 # cpp-code-review-skill
-`cpp-code-review-skill` 是一个面向 Codex 的 C++ / Qt 代码审查 skill。它把 Codex 的审查重点收束到生产环境里最容易造成事故或维护成本失控的 C++ 问题：内存泄漏、悬空指针、拷贝开销、线程安全、异常安全、代码规范漂移、冗余重复代码，以及 Qt 对象生命周期和线程亲和性。
+`cpp-code-review-skill` 是一个面向 Codex 的 C++ / Qt 代码审查 skill。它把 Codex 的审查重点收束到生产环境里最容易造成事故或维护成本失控的 C++ 问题：内存泄漏、悬空指针、拷贝开销、耗时/阻塞操作、线程安全、异常安全、代码规范漂移、强耦合代码、多条 if-else、冗余重复代码，以及 Qt 对象生命周期和线程亲和性。
 
 这个仓库适合放到 GitHub 后作为可复用 skill 使用：你可以把它安装到某个项目的 `.agents/skills` 目录，也可以安装到个人 Codex skills 目录，让 Codex 在审查 C++ / Qt 代码时自动加载这套审查流程。
 
@@ -10,9 +10,12 @@
 - 内存泄漏和所有权：`new/delete`、RAII、`unique_ptr::release()`、`shared_ptr` 环、C API 资源释放、QObject parent ownership。
 - 悬空指针和生命周期：lambda 捕获、异步回调、`std::string_view` / `QStringView` / `std::span`、`constData()` / `c_str()`、QObject 被销毁后的访问。
 - 拷贝开销和性能：大对象按值传参、range-for 按值复制、Qt 隐式共享 detach、字符串/图像/视频帧反复转换、热路径分配。
+- 耗时/阻塞操作：GUI 线程同步 I/O、数据库/网络/进程等待、`sleep` / `wait`、重型初始化、大文件解析、图像/视频处理和热路径长循环。
 - 线程安全：数据竞争、锁顺序、手动 `lock/unlock`、`std::thread` / `QThread` 退出、UI 线程访问、Qt 跨线程 signal-slot。
 - 异常安全：构造失败、部分初始化、失败路径清理、状态提交/回滚、`noexcept` 边界、析构函数异常。
 - 代码规范和一致性：命名、include 顺序、头文件卫生、错误处理风格、日志风格、Qt/C++ 习惯用法是否偏离项目约定。
+- 强耦合代码：跨层调用、UI 与业务/存储/网络逻辑粘连、循环依赖、全局单例依赖、难以独立测试的模块边界。
+- 多条 if-else：过长条件链、重复条件分发、深层嵌套、按类型/状态/命令字符串分支且难以扩展的逻辑。
 - 冗余和重复代码：重复分支、重复校验/转换/清理逻辑、死代码、无意义 wrapper、过度抽象和容易漂移的复制粘贴代码。
 - Qt 专项风险：QObject ownership、`deleteLater()`、lambda connect 生命周期、`Qt::DirectConnection`、`Qt::BlockingQueuedConnection`、`QTimer` / `QNetworkAccessManager` 生命周期。
 
@@ -124,7 +127,7 @@ Use cpp-code-review to check this QThread shutdown logic.
 ```
 
 ```text
-使用 cpp-code-review 审查这次 C++ 改动，重点看代码规范、冗余逻辑、重复代码和过度封装。
+使用 cpp-code-review 审查这次 C++ 改动，重点看代码规范、耗时操作、强耦合、多条 if-else、冗余逻辑、重复代码和过度封装。
 ```
 
 Codex 也可能根据 skill 描述自动触发，但在重要审查里建议显式写出 `cpp-code-review`，这样更稳定。
@@ -142,6 +145,9 @@ python -B .agents\skills\cpp-code-review\scripts\cpp_review_scout.py <路径>
 ```powershell
 python -B .agents\skills\cpp-code-review\scripts\cpp_review_scout.py src include
 python -B .agents\skills\cpp-code-review\scripts\cpp_review_scout.py . --category thread-safety
+python -B .agents\skills\cpp-code-review\scripts\cpp_review_scout.py . --category expensive-operation
+python -B .agents\skills\cpp-code-review\scripts\cpp_review_scout.py . --category conditional-complexity
+python -B .agents\skills\cpp-code-review\scripts\cpp_review_scout.py . --category duplicate-code
 python -B .agents\skills\cpp-code-review\scripts\cpp_review_scout.py . --json
 python -B .agents\skills\cpp-code-review\scripts\cpp_review_scout.py . --tools
 ```
@@ -162,11 +168,16 @@ python3 -B .agents/skills/cpp-code-review/scripts/cpp_review_scout.py src includ
 - `constData()` / `c_str()` 借用指针
 - range-for 按值复制
 - 字符串、图像、视频帧转换
+- 阻塞等待、`sleep`、`QEventLoop::exec()`、同步进程调用
+- 文件 I/O、数据库操作、重型解析/转换
 - `std::thread::detach()`
 - 手动 `lock/unlock`
 - `Qt::DirectConnection`
 - `Qt::BlockingQueuedConnection`
 - `QMetaObject::invokeMethod`
+- 全局单例 / service locator、跨层 include 和重依赖头文件
+- 过长 `else if` 链、深层控制流嵌套
+- 规范化后的重复代码块
 - 析构函数、`throw`、`noexcept`、空 `catch`
 
 注意：扫描器只是“线索生成器”，不是静态分析器。它的输出需要结合上下文确认，不能直接当作最终审查结论。
@@ -182,7 +193,7 @@ python -B .agents\skills\cpp-code-review\scripts\cpp_review_scout.py --self-test
 成功时会看到类似输出：
 
 ```text
-self-test passed: 15 findings across 6 categories
+self-test passed: 23 findings across 10 categories
 ```
 
 也可以查看扫描分类：
@@ -195,8 +206,12 @@ python -B .agents\skills\cpp-code-review\scripts\cpp_review_scout.py --list-cate
 
 ```text
 copy-overhead
+conditional-complexity
+coupling
 dangling-lifetime
+duplicate-code
 exception-safety
+expensive-operation
 memory-lifetime
 qt-lifetime
 thread-safety
@@ -258,7 +273,7 @@ Acceptable, acceptable with changes, or redesign recommended.
 
 - 帮 Codex 按生产风险组织审查思路。
 - 把 C++ / Qt 常见事故模式变成可重复检查的流程。
-- 把代码规范、重复逻辑和冗余实现纳入同一套 review 输出。
+- 把耗时/阻塞操作、代码规范、强耦合、多条 if-else、重复逻辑和冗余实现纳入同一套 review 输出。
 - 用脚本快速生成热点线索。
 - 把工具输出和人工上下文判断结合起来形成可执行 review。
 
