@@ -63,8 +63,6 @@ your-cpp-project/
 Windows PowerShell 示例：
 
 ```powershell
-git clone https://github.com/<your-github-user>/cpp-code-review-skill.git
-
 cd C:\path\to\your-cpp-project
 Copy-Item C:\path\to\cpp-code-review-skill\.agents . -Recurse -Force
 ```
@@ -72,8 +70,6 @@ Copy-Item C:\path\to\cpp-code-review-skill\.agents . -Recurse -Force
 macOS / Linux 示例：
 
 ```bash
-git clone https://github.com/<your-github-user>/cpp-code-review-skill.git
-
 cd /path/to/your-cpp-project
 cp -R /path/to/cpp-code-review-skill/.agents .
 ```
